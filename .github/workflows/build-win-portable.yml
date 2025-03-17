@@ -1,0 +1,60 @@
+name: Build Brave Portable (Windows)
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Install Dependencies
+        run: |
+          choco install -y visualstudio2019buildtools python nodejs git
+          git config --global core.longpaths true
+
+      - name: Clone Depot Tools (Shallow Clone)
+        run: git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
+
+      - name: Add Depot Tools to Path
+        run: echo "$GITHUB_WORKSPACE/depot_tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Clone Brave Repo (Shallow Clone)
+        run: git clone --depth=1 https://github.com/brave/brave-browser.git
+
+      - name: Set Up Chromium Environment
+        run: |
+          cd brave-browser
+          npm install
+          cmd.exe /c "gclient sync --no-history"
+
+      - name: Configure Portable Build
+        run: |
+          cd brave-browser
+          cmd.exe /c "gn gen out\Release --args='is_component_build=false symbol_level=0 is_debug=false'"
+
+      - name: Build Brave
+        run: |
+          cd brave-browser
+          cmd.exe /c "autoninja -C out\Release brave"
+
+      - name: Create Portable Directory
+        run: |
+          mkdir BravePortable
+          Copy-Item -Recurse brave-browser\out\Release\* BravePortable\
+
+      - name: Modify Brave for Full Portability
+        run: |
+          echo '@echo off' > BravePortable\BravePortable.bat
+          echo 'start "" brave.exe --user-data-dir="%~dp0\Profile" --disk-cache-dir="%~dp0\Profile\Cache" --temp-profile="%~dp0\Temp"' >> BravePortable\BravePortable.bat
+
+      - name: Package Brave Portable (ZIP)
+        run: Compress-Archive -Path BravePortable -DestinationPath BravePortable.zip
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: Brave-Portable-Windows
+          path: BravePortable.zip
