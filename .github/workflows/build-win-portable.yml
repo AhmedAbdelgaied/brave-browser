@@ -1,6 +1,10 @@
 name: Build Brave Portable (Windows)
 
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   build:
@@ -8,56 +12,69 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install Dependencies
         run: |
-          choco install -y visualstudio2019buildtools python nodejs git
-          git config --global core.longpaths true
+          choco install -y visualstudio2019buildtools python nodejs-lts
+          refreshenv
+          npm install -g npm@latest
+          npm install -g n
+          n 20.8.0
 
       - name: Clone Depot Tools (Shallow Clone)
-        run: git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
+        run: |
+          git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
 
       - name: Add Depot Tools to Path
-        run: echo "$GITHUB_WORKSPACE/depot_tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        run: |
+          echo "$GITHUB_WORKSPACE/depot_tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          echo "DEPOT_TOOLS_WIN_TOOLCHAIN=0" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Verify Depot Tools Installation
+        run: |
+          cd depot_tools
+          gclient --version
 
       - name: Clone Brave Repo (Shallow Clone)
-        run: git clone --depth=1 https://github.com/brave/brave-browser.git
+        run: |
+          git clone --depth=1 https://github.com/brave/brave-browser.git
+          cd brave-browser
 
       - name: Set Up Chromium Environment
         run: |
           cd brave-browser
           npm install
-          cmd.exe /c "gclient sync --no-history"
+          gclient sync --no-history
 
       - name: Configure Portable Build
         run: |
           cd brave-browser
-          cmd.exe /c "gn gen out\Release --args='is_component_build=false symbol_level=0 is_debug=false'"
+          gn gen out/Release --args="is_official_build=true is_debug=false"
 
       - name: Build Brave
         run: |
           cd brave-browser
-          cmd.exe /c "autoninja -C out\Release brave"
+          ninja -C out/Release chrome
 
       - name: Create Portable Directory
         run: |
           mkdir BravePortable
-          Copy-Item -Recurse brave-browser\out\Release\* BravePortable\
+          cp -r brave-browser/out/Release/* BravePortable/
 
       - name: Modify Brave for Full Portability
         run: |
-          echo '@echo off' > BravePortable\BravePortable.bat
-          echo 'start "" brave.exe --user-data-dir="%~dp0\Profile" --disk-cache-dir="%~dp0\Profile\Cache" --temp-profile="%~dp0\Temp"' >> BravePortable\BravePortable.bat
+          echo 'UserData=.\UserData' > BravePortable/brave-portable.ini
 
       - name: Package Brave Portable (ZIP)
-        run: Compress-Archive -Path BravePortable -DestinationPath BravePortable.zip
-     
-      - name: Ensure Dependencies are Installed
-        run: npm install --force
+        run: |
+          Compress-Archive -Path BravePortable -DestinationPath BravePortable.zip
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Brave-Portable-Windows
           path: BravePortable.zip
+
+      - name: Post Checkout Code
+        run: echo "Build completed!"
